@@ -27,7 +27,7 @@ label{display:block;font-size:13px;color:var(--mu);margin-top:8px}#log{font-size
 <section id="t-lib"><div class="bar"><input id="q" type="search" placeholder="Cerca titolo, serie, autore…"></div>
 <button style="margin:0 14px" id="exp">⬇︎ Esporta CSV</button><div id="lib"></div></section>
 
-<section id="t-new" hidden><div class="bar"><button class="pri" id="chk-b">🔄 Cerca nuovi volumi</button><span id="chk" style="align-self:center;color:var(--mu);font-size:13px"></span></div><div id="new"></div></section>
+<section id="t-new" hidden><div class="bar"><button class="pri" id="chk-b">🔄 Cerca nuovi volumi</button><span id="chk" style="align-self:center;color:var(--mu);font-size:13px"></span></div><div id="chklog" class="pad" style="font-size:13px;color:var(--mu)"></div><div id="new"></div></section>
 
 <section id="t-add" hidden><div class="pad">
 <button class="pri" id="scanbtn">📷 Scansiona codice a barre</button><div id="reader" hidden></div>
@@ -55,21 +55,23 @@ const F=[['title','Titolo'],['series','Serie'],['number','Numero','number'],['au
 const to13=i=>{if(i.length!=10)return i;const s='978'+i.slice(0,9);let c=0;for(let k=0;k<12;k++)c+=+s[k]*(k%2?3:1);return s+(10-c%10)%10};
 const cleanIsbn=s=>{s=String(s||'').replace(/[^0-9Xx]/g,'').toUpperCase();return /^(97[89]\d{10}|\d{9}[\dX])$/.test(s)?to13(s):''};
 const LG={88:'it',2:'fr',84:'es',3:'de',0:'en',1:'en',4:'ja',89:'ko',7:'zh',85:'pt'};
-const lgOf=i=>{const g=i.slice(3);for(let k=1;k<4;k++)if(LG[g.slice(0,k)])return LG[g.slice(0,k)];return ''};
-function parse(t){const m=t.match(/^(.*?)[\s,.:\-–#]*(?:volume|vol\.?|numero|n\.?|#)?\s*(\d{1,4})\s*$/i);return(!m||!m[1].trim())?[t,null]:[m[1].trim(),+m[2]]}
+const lgOf=i=>{if(i.startsWith('97912'))return'it';if(i.startsWith('97910'))return'fr';if(i.startsWith('97911'))return'ko';if(i.startsWith('9798'))return'en';if(i.startsWith('979'))return'';const g=i.slice(3);for(let k=1;k<4;k++)if(LG[g.slice(0,k)])return LG[g.slice(0,k)];return ''};
+function parse(t){t=t.replace(/^manga\s*:\s*/i,'').replace(/^libri?\s+/i,'').replace(/(\d)\s+by\s+.+$/i,'$1');const m=t.match(/^(.*?)[\s,.:\-–#]*(?:volume|vol\.?|numero|n\.?|#)?\s*(\d{1,4})\s*$/i);return(!m||!m[1].trim())?[t,null]:[m[1].trim(),+m[2]]}
 
 // ---- Fonti dati: Google Books + Open Library (fallback)
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function jget(u){for(let t=0;t<3;t++){const r=await fetch(u);if(r.ok)return r.json();if(r.status!=429&&r.status<500)throw Error('HTTP '+r.status);await sleep(1500*(t+1))}throw Error('HTTP 429: troppe richieste, riprova tra poco')}
 function mapGB(v){const ids=v.industryIdentifiers||[],id=ids.find(x=>x.type=='ISBN_13')||ids.find(x=>x.type=='ISBN_10');if(!id||!v.title)return null;
 const t=[v.title,v.subtitle].filter(Boolean).join(' '),[s,nm]=parse(t),i=to13(id.identifier);
 return{isbn:i,title:t,series:s,number:nm,authors:(v.authors||[]).join(', '),publisher:v.publisher||'',language:v.language||lgOf(i),date:v.publishedDate||'',pages:v.pageCount||0,summary:(v.description||'').replace(/<[^>]+>/g,''),cover:(v.imageLinks?.thumbnail||'').replace('http:','https:').replace('&edge=curl','')}}
 async function gb(q,lang,newest){const u=new URL('https://www.googleapis.com/books/v1/volumes');
 u.search=new URLSearchParams({q,maxResults:40,printType:'books',...(lang&&{langRestrict:lang}),...(newest&&{orderBy:'newest'})});
-const j=await(await fetch(u)).json();return(j.items||[]).map(x=>mapGB(x.volumeInfo)).filter(Boolean)}
-async function ol(isbn){const k='ISBN:'+isbn,j=await(await fetch(`https://openlibrary.org/api/books?bibkeys=${k}&format=json&jscmd=data`)).json(),b=j[k];if(!b)return null;
+const j=await jget(u);return(j.items||[]).map(x=>mapGB(x.volumeInfo)).filter(Boolean)}
+async function ol(isbn){const k='ISBN:'+isbn,j=await jget(`https://openlibrary.org/api/books?bibkeys=${k}&format=json&jscmd=data`),b=j[k];if(!b)return null;
 const t=[b.title,b.subtitle].filter(Boolean).join(' '),[s,nm]=parse(t);
 return{isbn,title:t,series:s,number:nm,authors:(b.authors||[]).map(a=>a.name).join(', '),publisher:(b.publishers||[]).map(p=>p.name).join(', '),language:lgOf(isbn),date:b.publish_date||'',pages:b.number_of_pages||0,summary:typeof b.notes=='string'?b.notes:'',cover:b.cover?.large||b.cover?.medium||''}}
-async function lookup(isbn){let r=null;try{r=(await gb('isbn:'+isbn))[0]}catch(e){}
-if(!r){try{r=await ol(isbn);if(r)log('ℹ️ Trovato su Open Library')}catch(e){}}return r}
+async function lookup(isbn){let r=null;try{r=(await gb('isbn:'+isbn))[0]}catch(e){log('⚠️ Google Books: '+e.message)}
+if(!r){try{r=await ol(isbn);if(r)log('ℹ️ Trovato su Open Library')}catch(e){log('⚠️ Open Library: '+e.message)}}return r}
 
 // ---- Aggiunta
 async function addIsbn(i,batch){i=cleanIsbn(i);if(!i)return log('❌ ISBN non valido');
@@ -91,25 +93,48 @@ if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
 else if(c=='"')q=true;else if(c==d){row.push(f);f=''}
 else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;row.push(f);r.push(row);row=[];f=''}else f+=c}
 if(f||row.length){row.push(f);r.push(row)}return r.filter(x=>x.some(y=>y.trim()))}
-async function importText(t){const rows=parseCSV(t);if(!rows.length)return;const h=rows[0].map(x=>n(x)),hd=h.includes('isbn'),c=k=>h.indexOf(k);
-for(const r of hd?rows.slice(1):rows){const i=hd?cleanIsbn(r[c('isbn')]):r.map(cleanIsbn).find(Boolean);if(!i)continue;
-if(hd&&c('titolo')>=0&&r[c('titolo')]){if(vols.some(v=>v.isbn==i))continue;const g=x=>c(x)<0?'':(r[c(x)]||'').trim(),ti=g('titolo'),[s,nm]=parse(ti);
-vols.push({isbn:i,title:ti,series:g('serie')||s,number:g('numero')?+g('numero'):nm,authors:g('autori'),publisher:g('editore'),language:g('lingua'),date:g('data'),pages:+g('pagine')||0,summary:g('trama'),cover:g('copertina'),state:'owned',addedAt:Date.now()})}
-else await addIsbn(i,true)}
-save();render();log('📄 Import terminato')}
-function exportCSV(){const q=s=>'"'+String(s??'').replace(/"/g,'""')+'"',H='ISBN,Titolo,Serie,Numero,Autori,Editore,Lingua,Data,Pagine,Trama,Copertina,Aggiunto';
+async function importText(t){const rows=parseCSV(t);if(!rows.length)return;const h=rows[0].map(x=>n(x)),f=re=>h.findIndex(x=>re.test(x)),
+own=h.includes('titolo')&&h.includes('copertina')&&h.includes('isbn'),c13=f(/isbn13|^ean/),c10=f(/isbn10|^upc/),ci=h.indexOf('isbn'),hd=own||c13>=0||c10>=0||ci>=0,
+cl=x=>String(x||'').replace(/[^0-9Xx]/g,'').toUpperCase();let ok=0,miss=0,bad=0,sample='';
+for(const r of hd?rows.slice(1):rows){
+let raws=(hd?(own||ci>=0&&c13<0?[r[ci]]:[r[c13],r[c10]]):r).map(cl).filter(x=>cleanIsbn(x));raws=[...new Set(raws)];if(!hd)raws=raws.slice(0,1);
+if(!raws.length){bad++;sample=sample||(hd?[r[c13],r[c10],r[ci]].filter(Boolean).join(' / '):r.join(' | ')).slice(0,60);continue}
+const i=cleanIsbn(raws[0]),g=k=>(r[h.indexOf(k)]||'').trim();
+if(new Set(raws.map(cleanIsbn)).size>1)log('⚠️ ISBN-13 e ISBN-10 diversi nella riga: provo entrambi');
+let o=null;
+if(own){const ti=g('titolo'),[s,nm]=parse(ti);o={title:ti,series:g('serie')||s,number:g('numero')?+g('numero'):nm,authors:g('autori'),publisher:g('editore'),language:g('lingua'),date:g('data'),pages:+g('pagine')||0,summary:g('trama'),cover:g('copertina')}}
+else{await sleep(400);for(const q of raws){o=await lookup(q);if(o)break}}
+if(!o){miss++;log('❌ Non trovato: '+raws.join(' / '));continue}
+const old=vols.find(v=>v.isbn==i);o.isbn=i;o.language=o.language||lgOf(i);o.state='owned';o.addedAt=old?.addedAt||Date.now();vols=vols.filter(v=>v.isbn!=i);vols.push(o);ok++;log('✅ '+o.title)}
+save();render();
+log(`📄 Import: ${ok} aggiunti, ${miss} non trovati, ${bad} righe senza ISBN valido`);
+if(sample)log('Esempio di ISBN non valido: «'+sample+'»'+(/\d[eE][+\-]?\d/.test(sample)?' — Excel ha convertito gli ISBN in notazione scientifica: formatta la colonna come Testo e riesporta il CSV':''))}
+async function exportCSV(){const q=s=>'"'+String(s??'').replace(/"/g,'""')+'"',H='ISBN,Titolo,Serie,Numero,Autori,Editore,Lingua,Data,Pagine,Trama,Copertina,Aggiunto';
 const rows=vols.filter(v=>v.state=='owned').sort((a,b)=>(a.series||'').localeCompare(b.series||'')||(a.number||0)-(b.number||0))
 .map(v=>[v.isbn,v.title,v.series,v.number??'',v.authors,v.publisher,v.language,v.date,v.pages,v.summary,v.cover,new Date(v.addedAt).toISOString().slice(0,10)].map(q).join(','));
-const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+[H,...rows].join('\n')],{type:'text/csv'}));a.download='Collezione-Fumetti.csv';a.click()}
+const csv='\uFEFF'+[H,...rows].join('\n'),d=await window.claude?.use?.('downloads');
+if(d){try{await d.save({filename:'Collezione-Fumetti.csv',data:csv})}catch(e){}return}
+const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='Collezione-Fumetti.csv';a.click()}
 
 // ---- Novità
-async function check(){const g={};vols.filter(v=>v.state=='owned'&&v.number!=null).forEach(v=>(g[n(v.series)+'|'+n(v.publisher)+'|'+v.language]??=[]).push(v));
-const known=new Set(vols.map(v=>v.isbn)),seen=new Set(vols.map(v=>n(v.series)+'|'+v.number)),ks=Object.keys(g);let found=0,i=0;
-for(const k of ks){const a=g[k],f=a[0],top=Math.max(...a.map(v=>v.number));$('#chk').textContent=`Controllo ${++i}/${ks.length}: ${f.series}`;
-try{for(const b of await gb(`intitle:"${f.series}"`+(f.publisher?` inpublisher:"${f.publisher}"`:''),f.language,true)){
-if(b.number>top&&!known.has(b.isbn)&&n(b.series)==n(f.series)&&samePub(b.publisher,f.publisher)&&(!f.language||b.language==f.language)&&!seen.has(n(b.series)+'|'+b.number)){
-known.add(b.isbn);seen.add(n(b.series)+'|'+b.number);vols.push({...b,state:'new',addedAt:Date.now()});found++}}}catch(e){}
-await new Promise(r=>setTimeout(r,300))}
+const NOISE=new Set('di e by libri libro manga fumetti n vol volume numero panini comics planet ediz edizione italiana brossura'.split(' '));
+const tok=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/['’`]/g,'').split(/[^a-z0-9]+/).filter(w=>w&&!NOISE.has(w)&&!/^\d+$/.test(w));
+async function olSearch(words){const j=await jget('https://openlibrary.org/search.json?'+new URLSearchParams({title:words.join(' '),limit:40,sort:'new',fields:'title,isbn,publisher,first_publish_year,author_name,cover_i'}));
+return(j.docs||[]).map(d=>{const i=(d.isbn||[]).map(cleanIsbn).find(x=>x.length==13);if(!i||!d.title)return null;const[s,nm]=parse(d.title);
+return{isbn:i,title:d.title,series:s,number:nm,authors:(d.author_name||[]).join(', '),publisher:(d.publisher||[]).join(', '),language:lgOf(i),date:String(d.first_publish_year||''),pages:0,summary:'',cover:d.cover_i?`https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg`:''}}).filter(Boolean)}
+async function check(){const g={};vols.filter(v=>v.state=='owned'&&v.number!=null).forEach(v=>(g[n(v.series)]??=[]).push(v));
+const known=new Set(vols.map(v=>v.isbn)),ks=Object.keys(g);let found=0,i=0;$('#chklog').innerHTML='';
+for(const k of ks){const a=g[k],f=a[0],top=Math.max(...a.map(v=>v.number)),sets=a.map(v=>tok(v.series)),key=sets.reduce((x,y)=>x.filter(w=>y.includes(w))),allow=new Set(sets.flat()),
+langs=new Set(a.map(v=>v.language).filter(Boolean)),pubs=a.map(v=>v.publisher).filter(Boolean);
+$('#chk').textContent=`Controllo ${++i}/${ks.length}: ${f.series}`;
+if(!key.length){$('#chklog').innerHTML+=`<div>${esc(f.series)}: titoli troppo diversi, uniforma il campo Serie</div>`;continue}
+const words=[...key].filter(w=>w.length>2).sort((x,y)=>y.length-x.length).slice(0,4);let res=[],err='',add=0;
+try{res=await gb(words.map(w=>'intitle:'+w).join(' '),[...langs][0],true)}catch(e){err+=' · Google: '+e.message}
+try{res=res.concat(await olSearch(words))}catch(e){err+=' · OpenLibrary: '+e.message}
+for(const b of res){const t=tok(b.series);
+if(b.number>top&&!known.has(b.isbn)&&!vols.some(v=>v.number==b.number&&words.every(w=>tok(v.series).includes(w)))&&key.every(w=>t.includes(w))&&t.every(w=>allow.has(w))&&(!b.language||!langs.size||langs.has(b.language))&&(!b.publisher||!pubs.length||pubs.some(p=>samePub(p,b.publisher)))){
+known.add(b.isbn);vols.push({...b,series:f.series,state:'new',addedAt:Date.now()});found++;add++}}
+$('#chklog').innerHTML+=`<div>${esc(f.series)} (ultimo: ${top}) → ${res.length} risultati, ${add} nuovi${esc(err)}</div>`;await sleep(300)}
 save();render();$('#chk').textContent=ks.length?(found?`Trovate ${found} novità`:'Nessuna novità'):'Aggiungi prima qualche volume numerato'}
 
 // ---- Modifica
