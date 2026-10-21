@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Fumetteca</title>
+<style>
+:root{--bg:#f4f4f6;--card:#fff;--tx:#1c1c1e;--mu:#6e6e73;--ac:#d4380d;--ln:#e2e2e6;color-scheme:light dark}
+@media(prefers-color-scheme:dark){:root{--bg:#101012;--card:#1c1c1f;--tx:#f2f2f4;--mu:#9a9aa2;--ac:#ff7a45;--ln:#2e2e33}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px -apple-system,system-ui,sans-serif;padding:env(safe-area-inset-top) 0 calc(64px + env(safe-area-inset-bottom))}
+header{padding:12px 14px 4px}h1{margin:0;font-size:26px}h3{margin:14px 14px 4px;font-size:14px;color:var(--mu);text-transform:uppercase}h3 span{opacity:.6}
+.bar{display:flex;gap:6px;padding:6px 14px;flex-wrap:wrap}.seg{display:flex;flex:1;background:var(--ln);border-radius:9px;padding:2px}
+.seg button{flex:1;border:0;background:none;color:var(--tx);padding:6px;border-radius:7px;font-size:14px}.seg .on{background:var(--card);font-weight:600}
+input,textarea,button{font:inherit;color:var(--tx)}input,textarea{width:100%;padding:9px;border:1px solid var(--ln);border-radius:9px;background:var(--card)}
+button{border:1px solid var(--ln);background:var(--card);border-radius:9px;padding:9px 12px}button.pri{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
+.row{display:flex;gap:10px;align-items:center;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--ln)}
+.row img,.ph{width:44px;height:64px;object-fit:cover;border-radius:4px;background:var(--ln);flex:none}.mt{flex:1;min-width:0;display:flex;flex-direction:column}.mt small{color:var(--mu)}
+.em{text-align:center;color:var(--mu);padding:24px}.pad{padding:8px 14px;display:flex;flex-direction:column;gap:10px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--ln);padding-bottom:env(safe-area-inset-bottom)}
+nav span{pointer-events:none}nav button{flex:1;border:0;border-radius:0;background:none;padding:12px 0;font-size:14px}nav .on{color:var(--ac);font-weight:700}
+dialog{width:min(560px,94vw);max-height:90vh;border:0;border-radius:14px;background:var(--card);color:var(--tx);padding:14px}dialog::backdrop{background:#0008}
+label{display:block;font-size:13px;color:var(--mu);margin-top:8px}#log{font-size:13px;color:var(--mu)}#log div{padding:2px 0}#reader{width:100%}
+</style></head><body>
+<header><h1>📚 Fumetteca</h1></header>
+<div class="bar" id="gbar"><div class="seg">
+<button data-g="series" class="on">Serie</button><button data-g="publisher">Edizione</button><button data-g="author">Autore</button></div></div>
+
+<section id="t-lib"><div class="bar"><input id="q" type="search" placeholder="Cerca titolo, serie, autore…"></div>
+<button style="margin:0 14px" id="exp">⬇︎ Esporta CSV</button><div id="lib"></div></section>
+
+<section id="t-new" hidden><div class="bar"><button class="pri" id="chk-b">🔄 Cerca nuovi volumi</button><span id="chk" style="align-self:center;color:var(--mu);font-size:13px"></span></div><div id="new"></div></section>
+
+<section id="t-add" hidden><div class="pad">
+<button class="pri" id="scanbtn">📷 Scansiona codice a barre</button><div id="reader" hidden></div>
+<div style="display:flex;gap:6px"><input id="isbn" inputmode="numeric" placeholder="ISBN"><button id="addi">Aggiungi</button></div>
+<button id="imp">📄 Importa .txt / .csv</button><input id="file" type="file" accept=".txt,.csv,text/plain,text/csv" hidden>
+<button id="man">✍️ Aggiungi a mano</button><div id="log"></div></div></section>
+
+<nav><button data-t="lib" class="on">📚 Libreria <span id="c1"></span></button><button data-t="new">✨ Novità <span id="c2"></span></button><button data-t="add">＋ Aggiungi</button></nav>
+
+<dialog id="dlg"><form id="frm"><div id="fields"></div>
+<div style="display:flex;gap:8px;margin-top:12px"><button class="pri" style="flex:1">Salva</button><button type="button" id="del" style="color:#d00">Elimina</button><button type="button" id="cx">Annulla</button></div></form></dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const n=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+const samePub=(a,b)=>{a=n(a);b=n(b);return !a||!b||a.includes(b)||b.includes(a)};
+let vols=[],grp='series',cur=null,isNew=false,sc=null,last='',lastT=0;
+try{vols=JSON.parse(localStorage.getItem('fumetteca')||'[]')}catch(e){}
+const save=()=>{try{localStorage.setItem('fumetteca',JSON.stringify(vols))}catch(e){log('⚠️ Memoria piena: esporta il CSV')}};
+const log=m=>{const d=document.createElement('div');d.textContent=m;$('#log').prepend(d)};
+const F=[['title','Titolo'],['series','Serie'],['number','Numero','number'],['authors','Autori'],['publisher','Editore (edizione)'],['language','Lingua (it, en, fr…)'],['date','Data pubblicazione'],['pages','Pagine','number'],['isbn','ISBN'],['cover','URL copertina'],['summary','Trama','ta']];
+
+// ---- ISBN / serie
+const to13=i=>{if(i.length!=10)return i;const s='978'+i.slice(0,9);let c=0;for(let k=0;k<12;k++)c+=+s[k]*(k%2?3:1);return s+(10-c%10)%10};
+const cleanIsbn=s=>{s=String(s||'').replace(/[^0-9Xx]/g,'').toUpperCase();return /^(97[89]\d{10}|\d{9}[\dX])$/.test(s)?to13(s):''};
+const LG={88:'it',2:'fr',84:'es',3:'de',0:'en',1:'en',4:'ja',89:'ko',7:'zh',85:'pt'};
+const lgOf=i=>{const g=i.slice(3);for(let k=1;k<4;k++)if(LG[g.slice(0,k)])return LG[g.slice(0,k)];return ''};
+function parse(t){const m=t.match(/^(.*?)[\s,.:\-–#]*(?:volume|vol\.?|numero|n\.?|#)?\s*(\d{1,4})\s*$/i);return(!m||!m[1].trim())?[t,null]:[m[1].trim(),+m[2]]}
+
+// ---- Fonti dati: Google Books + Open Library (fallback)
+function mapGB(v){const ids=v.industryIdentifiers||[],id=ids.find(x=>x.type=='ISBN_13')||ids.find(x=>x.type=='ISBN_10');if(!id||!v.title)return null;
+const t=[v.title,v.subtitle].filter(Boolean).join(' '),[s,nm]=parse(t),i=to13(id.identifier);
+return{isbn:i,title:t,series:s,number:nm,authors:(v.authors||[]).join(', '),publisher:v.publisher||'',language:v.language||lgOf(i),date:v.publishedDate||'',pages:v.pageCount||0,summary:(v.description||'').replace(/<[^>]+>/g,''),cover:(v.imageLinks?.thumbnail||'').replace('http:','https:').replace('&edge=curl','')}}
+async function gb(q,lang,newest){const u=new URL('https://www.googleapis.com/books/v1/volumes');
+u.search=new URLSearchParams({q,maxResults:40,printType:'books',...(lang&&{langRestrict:lang}),...(newest&&{orderBy:'newest'})});
+const j=await(await fetch(u)).json();return(j.items||[]).map(x=>mapGB(x.volumeInfo)).filter(Boolean)}
+async function ol(isbn){const k='ISBN:'+isbn,j=await(await fetch(`https://openlibrary.org/api/books?bibkeys=${k}&format=json&jscmd=data`)).json(),b=j[k];if(!b)return null;
+const t=[b.title,b.subtitle].filter(Boolean).join(' '),[s,nm]=parse(t);
+return{isbn,title:t,series:s,number:nm,authors:(b.authors||[]).map(a=>a.name).join(', '),publisher:(b.publishers||[]).map(p=>p.name).join(', '),language:lgOf(isbn),date:b.publish_date||'',pages:b.number_of_pages||0,summary:typeof b.notes=='string'?b.notes:'',cover:b.cover?.large||b.cover?.medium||''}}
+async function lookup(isbn){let r=null;try{r=(await gb('isbn:'+isbn))[0]}catch(e){}
+if(!r){try{r=await ol(isbn);if(r)log('ℹ️ Trovato su Open Library')}catch(e){}}return r}
+
+// ---- Aggiunta
+async function addIsbn(i,batch){i=cleanIsbn(i);if(!i)return log('❌ ISBN non valido');
+const ex=vols.find(v=>v.isbn==i);
+if(ex){if(ex.state=='owned')return log('↩︎ Già in libreria: '+ex.title);ex.state='owned';ex.addedAt=Date.now();save();render();return log('✅ Aggiunto: '+ex.title)}
+log('🔎 '+i+'…');const r=await lookup(i);
+if(!r){log('❌ Non trovato: '+i+(batch?'':' — compila a mano'));return batch?0:edit({isbn:i,state:'owned'},true)}
+vols.push({...r,state:'owned',addedAt:Date.now()});save();render();log('✅ Aggiunto: '+r.title)}
+async function scan(){if(sc)return stopScan();$('#reader').hidden=false;$('#scanbtn').textContent='⏹ Ferma scanner';
+sc=new Html5Qrcode('reader',{formatsToSupport:[Html5QrcodeSupportedFormats.EAN_13],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+try{await sc.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:120}},t=>{const now=Date.now();if(t==last&&now-lastT<6000)return;last=t;lastT=now;addIsbn(t)})}
+catch(e){log('Fotocamera non disponibile (serve HTTPS e il permesso)');stopScan()}}
+async function stopScan(){try{await sc?.stop()}catch(e){}sc=null;$('#reader').hidden=true;$('#scanbtn').textContent='📷 Scansiona codice a barre'}
+
+// ---- CSV
+function parseCSV(t){t=t.replace(/^\uFEFF/,'');const l=t.split('\n')[0],d=(l.match(/;/g)||[]).length>(l.match(/,/g)||[]).length?';':',';
+const r=[];let row=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];
+if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
+else if(c=='"')q=true;else if(c==d){row.push(f);f=''}
+else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;row.push(f);r.push(row);row=[];f=''}else f+=c}
+if(f||row.length){row.push(f);r.push(row)}return r.filter(x=>x.some(y=>y.trim()))}
+async function importText(t){const rows=parseCSV(t);if(!rows.length)return;const h=rows[0].map(x=>n(x)),hd=h.includes('isbn'),c=k=>h.indexOf(k);
+for(const r of hd?rows.slice(1):rows){const i=hd?cleanIsbn(r[c('isbn')]):r.map(cleanIsbn).find(Boolean);if(!i)continue;
+if(hd&&c('titolo')>=0&&r[c('titolo')]){if(vols.some(v=>v.isbn==i))continue;const g=x=>c(x)<0?'':(r[c(x)]||'').trim(),ti=g('titolo'),[s,nm]=parse(ti);
+vols.push({isbn:i,title:ti,series:g('serie')||s,number:g('numero')?+g('numero'):nm,authors:g('autori'),publisher:g('editore'),language:g('lingua'),date:g('data'),pages:+g('pagine')||0,summary:g('trama'),cover:g('copertina'),state:'owned',addedAt:Date.now()})}
+else await addIsbn(i,true)}
+save();render();log('📄 Import terminato')}
+function exportCSV(){const q=s=>'"'+String(s??'').replace(/"/g,'""')+'"',H='ISBN,Titolo,Serie,Numero,Autori,Editore,Lingua,Data,Pagine,Trama,Copertina,Aggiunto';
+const rows=vols.filter(v=>v.state=='owned').sort((a,b)=>(a.series||'').localeCompare(b.series||'')||(a.number||0)-(b.number||0))
+.map(v=>[v.isbn,v.title,v.series,v.number??'',v.authors,v.publisher,v.language,v.date,v.pages,v.summary,v.cover,new Date(v.addedAt).toISOString().slice(0,10)].map(q).join(','));
+const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+[H,...rows].join('\n')],{type:'text/csv'}));a.download='Collezione-Fumetti.csv';a.click()}
+
+// ---- Novità
+async function check(){const g={};vols.filter(v=>v.state=='owned'&&v.number!=null).forEach(v=>(g[n(v.series)+'|'+n(v.publisher)+'|'+v.language]??=[]).push(v));
+const known=new Set(vols.map(v=>v.isbn)),seen=new Set(vols.map(v=>n(v.series)+'|'+v.number)),ks=Object.keys(g);let found=0,i=0;
+for(const k of ks){const a=g[k],f=a[0],top=Math.max(...a.map(v=>v.number));$('#chk').textContent=`Controllo ${++i}/${ks.length}: ${f.series}`;
+try{for(const b of await gb(`intitle:"${f.series}"`+(f.publisher?` inpublisher:"${f.publisher}"`:''),f.language,true)){
+if(b.number>top&&!known.has(b.isbn)&&n(b.series)==n(f.series)&&samePub(b.publisher,f.publisher)&&(!f.language||b.language==f.language)&&!seen.has(n(b.series)+'|'+b.number)){
+known.add(b.isbn);seen.add(n(b.series)+'|'+b.number);vols.push({...b,state:'new',addedAt:Date.now()});found++}}}catch(e){}
+await new Promise(r=>setTimeout(r,300))}
+save();render();$('#chk').textContent=ks.length?(found?`Trovate ${found} novità`:'Nessuna novità'):'Aggiungi prima qualche volume numerato'}
+
+// ---- Modifica
+function edit(v,nw){cur=v;isNew=nw;$('#fields').innerHTML=F.map(([k,l,t])=>`<label>${l}${t=='ta'?`<textarea name="${k}" rows="4">${esc(v[k])}</textarea>`:`<input name="${k}" ${t?`type="${t}"`:''} value="${esc(v[k])}">`}</label>`).join('');
+$('#del').hidden=nw;$('#dlg').showModal()}
+$('#frm').onsubmit=e=>{e.preventDefault();const d=new FormData(e.target),o={...cur};
+F.forEach(([k,,t])=>{const x=d.get(k).trim();o[k]=t=='number'?(x?+x:(k=='pages'?0:null)):x});
+if(!o.series){const p=parse(o.title);o.series=p[0];if(o.number==null)o.number=p[1]}
+if(isNew){if(!o.isbn)o.isbn='man-'+Date.now();o.addedAt=Date.now();if(vols.some(v=>v.isbn==o.isbn))return alert('ISBN già presente');vols.push(o)}else Object.assign(cur,o);
+save();render();$('#dlg').close()};
+$('#cx').onclick=()=>$('#dlg').close();
+$('#del').onclick=()=>{if(confirm('Eliminare questo volume?')){vols=vols.filter(v=>v!==cur);save();render();$('#dlg').close()}};
+
+// ---- Render
+const groups=l=>{const d={};for(const v of l)for(const k of grp=='series'?[v.series||v.title]:grp=='publisher'?[v.publisher||'—']:(v.authors?v.authors.split(', '):['—']))(d[k]??=[]).push(v);
+return Object.keys(d).sort((a,b)=>a.localeCompare(b,'it')).map(k=>[k,d[k].sort((a,b)=>(a.number||0)-(b.number||0))])};
+const row=(v,nw)=>`<div class="row" data-i="${esc(v.isbn)}">${v.cover?`<img loading="lazy" src="${esc(v.cover)}" alt="">`:'<div class="ph"></div>'}<div class="mt"><b>${esc(v.title)}</b><small>${esc([v.publisher,(v.language||'').toUpperCase(),v.date].filter(Boolean).join(' · '))}</small></div>${nw?`<button class="pri" data-buy="${esc(v.isbn)}">Acquistato</button><button data-hide="${esc(v.isbn)}">✕</button>`:''}</div>`;
+const list=(l,nw,em)=>groups(l).map(([k,a])=>`<h3>${esc(k)} <span>${a.length}</span></h3>${a.map(v=>row(v,nw)).join('')}`).join('')||`<p class="em">${em}</p>`;
+function render(){const own=vols.filter(v=>v.state=='owned'),nw=vols.filter(v=>v.state=='new'),q=$('#q').value.toLowerCase();
+$('#c1').textContent=own.length||'';$('#c2').textContent=nw.length||'';
+$('#lib').innerHTML=list(q?own.filter(v=>(v.title+v.series+v.authors).toLowerCase().includes(q)):own,0,'Libreria vuota. Vai su “Aggiungi”.');
+$('#new').innerHTML=list(nw,1,'Nessuna novità. Premi “Cerca nuovi volumi”.')}
+
+document.addEventListener('click',e=>{const t=e.target,by=k=>vols.find(v=>v.isbn==t.closest(`[data-${k}]`)?.dataset[k]);
+if(t.dataset.buy){const v=by('buy');v.state='owned';v.addedAt=Date.now();save();render()}
+else if(t.dataset.hide){by('hide').state='hidden';save();render()}
+else if(t.closest('.row')){const v=vols.find(v=>v.isbn==t.closest('.row').dataset.i);if(v)edit(v,false)}
+else if(t.dataset.g){grp=t.dataset.g;document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('on',b==t));render()}
+else if(t.dataset.t){document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b==t));
+for(const s of ['lib','new','add'])$('#t-'+s).hidden=s!=t.dataset.t;$('#gbar').hidden=t.dataset.t=='add';if(t.dataset.t!='add')stopScan()}});
+$('#q').oninput=render;$('#exp').onclick=exportCSV;$('#chk-b').onclick=check;$('#scanbtn').onclick=scan;
+$('#addi').onclick=()=>{addIsbn($('#isbn').value);$('#isbn').value=''};$('#man').onclick=()=>edit({state:'owned'},true);
+$('#imp').onclick=()=>$('#file').click();$('#file').onchange=async e=>{const f=e.target.files[0];if(f){const t=await f.text();e.target.value='';importText(t)}};
+render();
+</script></body></html>
